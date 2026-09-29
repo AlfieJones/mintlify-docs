@@ -1,5 +1,5 @@
 ---
-title: Define Host Components for TailorKit Apps
+title: Define Host Components for TailorKit App Extensions
 sidebarTitle: Components
 description: Expose a typed component contract so TailorKit apps can render your real UI components without directly importing or controlling them.
 ---
@@ -47,7 +47,7 @@ const Input = {
 } as const satisfies Component;
 
 export const components = {
-  ...primitives(primitiveTheme),
+  ...primitives(),
   Button,
   Input,
 };
@@ -123,7 +123,7 @@ A component definition without `children: true` is a leaf component from the app
 Pass your component map to `createTailorKit`. This makes the serialized contract available from your TailorKit API route at `/api/tailorkit/schema` and `/api/tailorkit/meta`.
 
 ```ts src/lib/tailorkit.ts
-import { components, contexts, actions } from "./components";
+import { components } from "./components";
 import { createTailorKit } from "tailorkit";
 import { z } from "zod";
 
@@ -131,8 +131,10 @@ export const tailorKit = createTailorKit({
   projectKey: process.env.TAILORKIT_PROJECT_KEY,
   scopes: { user: z.object({ userId: z.string().min(1) }) },
   components,
-  contexts,
-  actions,
+  contexts: {
+    "/": z.object({}),
+  },
+  actions: {},
 });
 ```
 

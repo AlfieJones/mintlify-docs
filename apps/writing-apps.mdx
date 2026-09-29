@@ -118,7 +118,7 @@ pnpm exec tailorkit login
 pnpm deploy
 ```
 
-When prompted during login, choose the named scope (for example, `user` or `organization`) this CLI session should be bound to. The resulting deploy token is scoped to that choice.
+During login the CLI prints a user code and an approval URL, and attempts to open the URL in your browser. Visit the URL, enter the code, and choose the named scope (for example, `user` or `organization`) this CLI session should be bound to. The CLI waits until you approve, then stores the resulting deploy token locally.
 
 After the initial deployment, start a live preview session:
 

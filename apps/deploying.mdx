@@ -1,5 +1,5 @@
 ---
-title: "Deploy TailorKit Apps to Production"
+title: "Deploy TailorKit Apps: Login, Preview, and Release"
 sidebarTitle: "Deploying"
 description: "Authenticate the TailorKit CLI, run your first deployment, iterate with live preview, and ship a production bundle — all from the command line."
 ---
@@ -14,7 +14,7 @@ Before you can deploy or preview, you need to authenticate the CLI with the host
 tailorkit login
 ```
 
-The CLI will open a page in your host app where you choose the named scope — for example, `user` or `organization` — that this CLI session should be bound to. The resulting deploy token is stored locally and scoped to that choice. All subsequent `deploy` and `preview` commands use this token automatically.
+The CLI contacts the host app and prints a short user code and an approval URL. It also attempts to open the approval URL in your default browser. Visit the URL, enter the code, and choose the named scope — for example, `user` or `organization` — that this CLI session should be bound to. The CLI polls until you approve (or the code expires). The resulting deploy token is stored locally in `~/.tailorkit/auth.json` and scoped to your choice. All subsequent `deploy` and `preview` commands use this token automatically.
 
 Use these commands to inspect and manage your current auth state:
 
@@ -75,7 +75,7 @@ If you haven't deployed before, the CLI doesn't yet have an `appId` to deploy to
 
 <Steps>
   <Step title="Authenticate with the host">
-    Run `tailorkit login` and complete the browser-based auth flow. Choose the scope you want to bind this session to.
+    Run `tailorkit login`. The CLI prints a user code and an approval URL, and attempts to open the URL in your browser. Enter the code, choose the scope you want to bind this session to, and approve the request. The CLI waits and completes once it detects approval.
 
     ```sh
     pnpm exec tailorkit login
@@ -158,8 +158,8 @@ pnpm exec tailorkit build
 pnpm exec tailorkit deploy
 ```
 
-Store your deploy token as a CI secret and set the `TAILORKIT_TOKEN` environment variable so the CLI can authenticate without an interactive login flow. Check `tailorkit deploy --help` for the exact environment variable name your host version supports.
+The CLI reads its deploy token from `~/.tailorkit/auth.json`. To authenticate in CI without an interactive login, run `tailorkit login` once on a machine that has browser access and copy the resulting `~/.tailorkit/auth.json` file into your CI environment's home directory (for example, via a CI secret mounted as a file).
 
 <Warning>
-  Never commit deploy tokens to source control. Use your CI platform's secret management to inject credentials at deploy time.
+  Never commit `auth.json` or any deploy token to source control. Use your CI platform's secret management to inject credentials at deploy time.
 </Warning>

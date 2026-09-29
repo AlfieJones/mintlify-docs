@@ -92,10 +92,6 @@ function UserTools() {
   A hook that returns the composed, typed context for this view and all of its mounted ancestor views. The shape is inferred from the host schema and fully typed by the generated bindings. Only callable while the `component` renders — calling it inside `loading` or `error` will throw.
 </ResponseField>
 
-<Note>
-  The `$meta` and `$runtime` properties on the returned object are internal sandbox details used by the TailorKit runtime. Do not read or write them in app code.
-</Note>
-
 ### How slot resolution works
 
 Each host slot independently selects exactly one view to render. The resolution order is:
