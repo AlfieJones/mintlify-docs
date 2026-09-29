@@ -1,0 +1,57 @@
+---
+title: "TailorKit CLI: Scaffold, Preview, and Deploy Apps"
+sidebarTitle: "Overview"
+description: "The TailorKit CLI lets you scaffold new app projects, generate typed host bindings, run live previews, and publish deployments from your terminal."
+---
+
+The TailorKit CLI is your primary tool for working with TailorKit apps outside of the host UI. You use it to create a new project from scratch, pull the latest typed bindings from a running host, preview your app in real time while you develop, and ship a production deployment — all without leaving your terminal.
+
+## Installation
+
+You can run the CLI without a local install using `npx` or `pnpm dlx`, or install it globally for day-to-day use.
+
+```sh
+# Run without installing
+npx tailorkit --help
+pnpm dlx tailorkit --help
+```
+
+```sh
+# Install globally
+npm install -g tailorkit
+```
+
+When you scaffold a project with `tailorkit init`, the CLI is already added as a project dependency and wired up through the `package.json` scripts, so you can also run it with your package manager's `run` command inside any scaffolded project.
+
+## Available commands
+
+| Command | What it does |
+|---|---|
+| `init [directory]` | Scaffold a new TailorKit app project with an interactive setup wizard |
+| `generate` | Connect to a running host, fetch its schema, and regenerate typed bindings |
+| `login` | Authenticate the CLI with a host app using a device-code flow |
+| `logout` | Remove stored credentials for a host app |
+| `whoami` | Print the host URL and scope for the current authenticated session |
+| `preview` | Start a Vite watch build and stream live updates to the host for in-context preview |
+| `build` | Produce a production bundle locally without uploading it |
+| `deploy` | Build the app and publish a new deployment to the host's CDN |
+
+## Global option
+
+Every command accepts the `--cwd <path>` option, which sets the working directory the CLI operates from. This is useful in monorepos or CI pipelines where you want to target a specific package without `cd`-ing first.
+
+```sh
+tailorkit deploy --cwd packages/my-tailorkit-app
+```
+
+<CardGroup cols={2}>
+  <Card title="CLI Commands" icon="terminal" href="/cli/commands">
+    Full syntax, options, and examples for every command
+  </Card>
+  <Card title="Writing Apps" icon="pen-to-square" href="/apps/writing-apps">
+    Build views and UI using your host's components and data
+  </Card>
+  <Card title="Deploying" icon="rocket" href="/apps/deploying">
+    Publish your app to production inside a host
+  </Card>
+</CardGroup>

@@ -1,0 +1,89 @@
+{
+  "projectType": "framework",
+  "projectName": "TailorKit",
+  "projectDescription": "TailorKit is a hosted framework that lets SaaS products embed a sandboxed app ecosystem, enabling users, partners, and AI to build extensions using the host product's own components, data, and actions.",
+  "theme": "luma",
+  "primaryColor": "#507200",
+  "lightColor": null,
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "how-it-works",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Host Integration",
+            "pages": [
+              "host/installation",
+              "host/views-and-slots",
+              "host/components",
+              "host/actions",
+              "host/layouts-and-styles"
+            ]
+          },
+          {
+            "group": "Building Apps",
+            "pages": [
+              "apps/overview",
+              "apps/writing-apps",
+              "apps/client-reference",
+              "apps/deploying"
+            ]
+          },
+          {
+            "group": "CLI",
+            "pages": [
+              "cli/overview",
+              "cli/commands"
+            ]
+          },
+          {
+            "group": "Security & Production",
+            "pages": [
+              "production/security-model",
+              "production/checklist"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Sandboxed opaque-origin iframe runtime for safe execution of third-party and AI-generated extension code",
+    "Host-controlled component contract — apps render through named host components, never raw DOM",
+    "Typed schema system (Zod, Valibot, ArkType) for views, slots, contexts, actions, and components",
+    "Server-side actions — trusted server functions TailorKit apps can call",
+    "CLI for scaffolding, generating host bindings, previewing, and deploying apps",
+    "React adapter with AppView, useApps, useView, and Root for host-side rendering",
+    "Layout primitives (Box, Flex, Grid, Inline) with responsive theme tokens",
+    "Named scopes for per-user and per-organization app installation boundaries",
+    "Managed CDN infrastructure for app asset delivery",
+    "Framework-agnostic handler — supports Next.js, TanStack Start, React Router, Nitro, Hono, and any standard Request/Response backend"
+  ],
+  "publicApiSurface": [
+    "createTailorKit(options) — tailorkit",
+    "createActions() — tailorkit",
+    "tailorKit.handler(request, { authenticate }) — tailorkit",
+    "createTailorKitClient<typeof tailorKit>(options) — tailorkit/react",
+    "Root, AppView, useApps, useView, primitives — tailorkit/react",
+    "primitives(theme?) — tailorkit/zod | tailorkit/valibot | tailorkit/arktype",
+    "defineClient({ slots }) — @tailorkit/app",
+    "createView(path, options) — @tailorkit/app",
+    "tailorkit init [directory] — CLI",
+    "tailorkit login — CLI",
+    "tailorkit generate — CLI",
+    "tailorkit preview — CLI",
+    "tailorkit deploy — CLI",
+    "tailorkit build — CLI",
+    "tailorkit logout — CLI",
+    "tailorkit whoami — CLI"
+  ]
+}

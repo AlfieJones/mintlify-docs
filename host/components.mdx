@@ -1,0 +1,185 @@
+---
+title: Define Host Components for TailorKit Apps
+sidebarTitle: Components
+description: Expose a typed component contract so TailorKit apps can render your real UI components without directly importing or controlling them.
+---
+
+Components are the UI building blocks that TailorKit apps are allowed to use inside your host product. An app never imports your React components directly and never writes DOM into your page. Instead, it renders named components from a contract you define — your host owns every real implementation.
+
+The flow looks like this: your host schema defines a named component contract. App bindings reference those names. At runtime the app produces a serialized UI tree. TailorKit looks up each name in the registered client renderers and hands it off to your real React components. The result is UI that is visually consistent with your product while keeping you in complete control of what can be rendered.
+
+## Define the component contract
+
+A component definition has three parts:
+
+- **`fields`** — serializable props the app can pass to the component.
+- **`callbacks`** — UI events that flow back from the rendered component to the app.
+- **`children: true`** — allows nested text and components; omit it for leaf components.
+
+Use `as const satisfies Component` to preserve the literal shape for TypeScript while validating the object against the TailorKit component type.
+
+```ts src/lib/components.ts
+import type { Component } from "tailorkit";
+import { primitives } from "tailorkit/zod";
+import { z } from "zod";
+
+const Button = {
+  fields: z.object({
+    size: z.enum(["default", "sm", "lg", "icon", "icon-sm", "icon-lg"]).optional(),
+    variant: z.enum(["default", "secondary", "ghost", "outline", "destructive"]).optional(),
+  }),
+  callbacks: {
+    onClick: {},
+  },
+  children: true,
+} as const satisfies Component;
+
+const Input = {
+  fields: z.object({
+    value: z.string(),
+  }),
+  callbacks: {
+    onValueChange: {
+      input: z.object({ value: z.string() }),
+    },
+  },
+  children: true,
+} as const satisfies Component;
+
+export const components = {
+  ...primitives(primitiveTheme),
+  Button,
+  Input,
+};
+```
+
+## Fields
+
+Fields are the serializable props an app can set on a component. In the example above, apps can pass `variant` and `size` to `Button`, but they cannot pass arbitrary React props or internal implementation details.
+
+Fields use the same schema model as views and actions. TailorKit serializes the schema into JSON Schema for the runtime contract.
+
+```ts
+const TabsTab = {
+  fields: z.object({
+    value: z.string(),
+  }),
+  children: true,
+} as const satisfies Component;
+```
+
+Define fields around stable product capabilities, not incidental React implementation details. Prefer `variant: "secondary"` over exposing class names, refs, or internal state that may change when you restyle the component.
+
+## Callbacks
+
+Callbacks are UI events that flow from a host-rendered component back to the TailorKit app. They are not server actions and they are not trusted work — use them for local interaction such as clicks, selected tab changes, and input value changes.
+
+```ts
+const Tabs = {
+  fields: z.object({
+    value: z.string(),
+  }),
+  callbacks: {
+    onValueChange: {
+      input: z.object({ value: z.string() }),
+    },
+  },
+  children: true,
+} as const satisfies Component;
+```
+
+A callback can define `input` and `output` schemas. The React renderer decides when to fire the callback and what payload to include.
+
+```tsx src/lib/tailorkit-client.tsx
+Input: ({ props: { onValueChange, ...rest }, children }) => (
+  <Input onChange={(event) => onValueChange({ value: event.target.value })} {...rest}>
+    {children}
+  </Input>
+),
+```
+
+For trusted server-side work — database writes, permission checks, external API calls — use [Actions](/host/actions) instead.
+
+## Children
+
+Set `children: true` to allow nested text and components. Children preserve their order and can contain multiple elements.
+
+```ts
+const TabsList = {
+  children: true,
+} as const satisfies Component;
+```
+
+The React renderer receives children as standard React nodes.
+
+```tsx
+TabsList: ({ props, children }) => <TabsList {...props}>{children}</TabsList>,
+```
+
+A component definition without `children: true` is a leaf component from the app's perspective — the app cannot nest anything inside it.
+
+## Register components on the server
+
+Pass your component map to `createTailorKit`. This makes the serialized contract available from your TailorKit API route at `/api/tailorkit/schema` and `/api/tailorkit/meta`.
+
+```ts src/lib/tailorkit.ts
+import { components, contexts, actions } from "./components";
+import { createTailorKit } from "tailorkit";
+import { z } from "zod";
+
+export const tailorKit = createTailorKit({
+  projectKey: process.env.TAILORKIT_PROJECT_KEY,
+  scopes: { user: z.object({ userId: z.string().min(1) }) },
+  components,
+  contexts,
+  actions,
+});
+```
+
+## Register renderers on the client
+
+The client maps each server-defined component name to a real React renderer. Passing `typeof tailorKit` as the generic argument means renderer props and children are typed directly from your component definitions — no separate type imports needed.
+
+```tsx src/lib/tailorkit-client.tsx
+import type { tailorKit } from "./tailorkit";
+import { createTailorKitClient, primitives } from "tailorkit/react";
+import { Button } from "@/components/button";
+import { Input } from "@/components/input";
+
+export const tailorKitClient = createTailorKitClient<typeof tailorKit>({
+  baseUrl:
+    typeof window === "undefined"
+      ? "http://localhost/api/tailorkit/"
+      : new URL("/api/tailorkit/", window.location.origin),
+  components: {
+    ...primitives,
+    Button: ({ props, children }) => (
+      <Button {...props}>{children}</Button>
+    ),
+    Input: ({ props: { onValueChange, ...rest }, children }) => (
+      <Input onChange={(event) => onValueChange({ value: event.target.value })} {...rest}>
+        {children}
+      </Input>
+    ),
+  },
+});
+
+export const { AppView, useApps, useView } = tailorKitClient;
+```
+
+When a remote app renders a component that has no registered renderer, TailorKit throws: `TailorKit component "Name" is not registered.`
+
+<Warning>
+**Keep components stable.** Renaming a component, removing a field, changing a field's type, removing a callback, or removing `children` support can break existing apps. When you need to make a breaking change, version the component name (e.g. `ButtonV2`) or coordinate the app update. Adding new optional fields, new callback payload fields, or entirely new components is always safe.
+</Warning>
+
+## Naming guidance
+
+Component names are public API. TailorKit also derives DOM-style tag names from them for remote rendering, so `TextArea` becomes `tailorkit-text-area` in the runtime.
+
+Use product-level names that can survive implementation changes:
+
+- **Good:** `Button`, `CustomerCard`, `AssigneeSelect`
+- **Risky:** `NewButtonV2`, `RadixSelectTrigger`, `BluePill`
+
+Use **fields** for stable variants and behavior, **callbacks** for app-handled UI events, **children** for composition, and **actions** for trusted server-side work.

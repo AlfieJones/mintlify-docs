@@ -1,0 +1,101 @@
+---
+title: "How TailorKit Apps Work: The Sandboxed Extension Model"
+sidebarTitle: "How It Works"
+description: "Learn how TailorKit connects host products and sandboxed apps through a typed schema contract, an isolated iframe runtime, and a proxied UI event boundary."
+---
+
+TailorKit is built around a clear separation between the host product and the apps that run inside it. The host owns everything sensitive — routing, data, auth, permissions, and the design system. Apps are independently built extensions that describe their UI using only the components and actions the host chooses to expose. TailorKit builds and enforces the contract between the two sides.
+
+## The two sides
+
+Every TailorKit integration involves two distinct parties.
+
+**The host product** is your SaaS application. It owns the page, routes, authentication, data loading, permissions, and final rendering. It publishes a typed schema that acts as the public API for any extension that wants to render inside it. The host decides where apps appear, what context they receive, and which server-side capabilities they can invoke.
+
+**TailorKit apps** are independently built extensions. They import auto-generated bindings from the host schema, implement one or more named views, and describe their UI using the host-approved component set. They never get direct access to the host's routing, DOM, secrets, or browser storage.
+
+## The schema contract
+
+The schema is the typed contract that sits between the host and every app. It defines:
+
+- **Views** — named paths (like `/users/detail`) the host publishes, each with a typed context payload the app receives at render time.
+- **Slots** — specific places in the host UI where an app can render.
+- **Components** — the subset of the host's design system that apps are permitted to use, including their allowed props and children.
+- **Actions** — server-side functions the host exposes for apps to request trusted work (data writes, clipboard access, navigation, etc.).
+- **Theme tokens** — design tokens apps can reference to match the host's visual style.
+
+When a host publishes its schema, TailorKit generates typed bindings for app developers. This means app code gets full TypeScript completion and compile-time checks against the exact API surface the host supports. When the host schema changes, app developers run `pnpm generate` to pull the updated contract.
+
+## The sandboxed runtime
+
+App code runs inside a hidden, opaque-origin iframe sandbox. "Opaque-origin" means the iframe has no origin at all from the browser's perspective — it cannot access `document.cookie`, `localStorage`, `sessionStorage`, or any cross-origin browser API on the host page.
+
+The sandbox enforces a strict Content Security Policy that blocks:
+
+- **Network connections** — apps cannot make arbitrary fetch or XHR requests from within the sandbox document.
+- **Image and style loading** from the sandbox document.
+- **Nested frames** inside the app iframe.
+- **Form submissions** from the sandbox document.
+
+The host fetches app bundle code before passing it across the sandbox boundary. App DOM is never inserted into the host document. The host receives only a validated, declarative UI description from the app — a serialized tree of approved component calls — and renders the real UI itself using its own React component implementations.
+
+<Note>
+  The sandbox is one layer of the security model, not a substitute for narrow schemas, careful authorization, and output validation. Review the [production security model](/production/security-model) and [launch checklist](/production/checklist) before loading third-party apps.
+</Note>
+
+## The event boundary
+
+UI interaction flows through TailorKit in both directions.
+
+When a user interacts with a host-rendered component (a button click, an input change), the host captures the event and forwards the callback to the app sandbox. The app can respond by updating its rendered output, which is serialized back across the boundary and re-rendered by the host.
+
+When an app needs to perform trusted work — writing data, navigating, accessing the clipboard — it calls a named host action. The host receives the action request, validates the payload, checks permissions, and executes the operation inside its own server runtime. The app never touches the host's internals directly.
+
+This design lets you grant narrow, specific capabilities without opening the full browser environment to extension code. For example, you can expose a `copyToClipboard` action while still preventing apps from reading cookies or local storage.
+
+## End-to-end flow
+
+Here is how a TailorKit integration works from definition to rendering.
+
+<Steps>
+  <Step title="Host defines the schema">
+    The host developer calls `createTailorKit` and defines views with typed context, allowed components with typed props, named actions, and theme tokens. This schema is the authoritative contract.
+  </Step>
+  <Step title="Apps are built against the schema">
+    App developers run `pnpm generate` to pull a typed binding file (`tailorkit.gen.ts`) from the live host. They implement views using `createView` and render only from the generated component set imported via `#tailorkit`.
+  </Step>
+  <Step title="Host routes authenticate and load apps">
+    When a user navigates to a host route, the host authenticates the request, resolves the list of installed apps for the current scope (user, organization, etc.), and determines which views are active.
+  </Step>
+  <Step title="Host renders with AppView">
+    The host renders `<AppView>` from `tailorkit/react` at the appropriate place in its UI. `AppView` receives the current view name and the context data to pass to the app.
+  </Step>
+  <Step title="TailorKit loads the app in the sandbox">
+    TailorKit fetches the app bundle from the CDN, injects it into a hidden opaque-origin iframe, and passes in the view context through a secure postMessage channel.
+  </Step>
+  <Step title="UI is proxied across the boundary">
+    The app renders its component tree inside the sandbox. TailorKit serializes the declarative output and forwards it to the host, which renders the real components from its design system. Events flow back into the sandbox; action requests flow to the host server.
+  </Step>
+</Steps>
+
+## What the host always controls
+
+No matter how an app is built or by whom, the host retains full authority over:
+
+- **Which views are active** and what context data each view receives.
+- **Which components** apps are allowed to render, and with which props.
+- **Which actions** are available, including all authorization logic inside each action.
+- **Which apps are installed** in a given scope, and whether a given app is trusted to load at all.
+- **Final rendering** — the host's React components are what users actually see; the app only provides instructions.
+
+## What apps can do
+
+Within the surface area the host exposes, app code can:
+
+- Implement named views and choose which slot to target.
+- Compose the host-approved component set to build UI.
+- Receive typed context data at render time.
+- Call host actions to request trusted server-side operations.
+- Fetch data from their own external APIs (subject to the host's CSP configuration).
+
+Apps cannot reach outside the boundary the host defines. They cannot read the host DOM, access browser storage, make unconstrained network requests from the sandbox document, or call any host internals that are not published as an explicit action.

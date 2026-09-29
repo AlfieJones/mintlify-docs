@@ -1,0 +1,148 @@
+---
+title: "Write TailorKit Apps: Views, Components, and Actions"
+sidebarTitle: "Writing Apps"
+description: "Build TailorKit app views using host-owned components and actions — from registering views and generating bindings to deploying a live preview."
+---
+
+A TailorKit app is built around views: named UI entry points that correspond to paths the host publishes. You register which views your app supports, implement each one using host-provided components and context, and deploy the result as a runtime bundle the host loads on demand.
+
+## Registering views
+
+Your app's entry point (`src/client.ts`) calls `defineClient` from `@tailorkit/app` to declare which views you support in each host slot. A slot is a named location in the host UI — like a side panel or a nav bar — where your app can render.
+
+```ts src/client.ts
+import { defineClient } from "@tailorkit/app";
+import HomeView from "./views/home";
+
+const client = defineClient({
+  slots: {
+    panel: { "/home": HomeView },
+  },
+});
+
+export default client;
+```
+
+The keys inside each slot object must match view paths defined in the host schema. The host controls which view is active; your app only implements the views it cares about.
+
+## Generating bindings
+
+Before you can use host components or access view context, you need to generate typed bindings from the host's schema. Keep your host app running, then run:
+
+```sh
+pnpm generate
+```
+
+This reads the host URL from `tailorkit.config.ts` and writes `src/tailorkit.gen.ts` — a typed module that exposes every component, action, view context shape, and theme token the host publishes. Import from `#tailorkit` (a path alias that resolves to this file) rather than importing the generated file directly.
+
+<Warning>
+  Do not edit `src/tailorkit.gen.ts` by hand. Regenerate it with `pnpm generate` whenever the host adds or changes a view, component, action, callback, or theme token.
+</Warning>
+
+## Implementing a view
+
+Each view is a file that calls `createView` from `@tailorkit/app` with the view path and a component:
+
+```tsx src/views/home.tsx
+import { createView } from "@tailorkit/app";
+import { Button } from "#tailorkit";
+
+const view = createView("/home", {
+  component: HomeView,
+});
+
+function HomeView() {
+  const context = view.useContext();
+
+  return (
+    <Button onClick={() => {}} variant="default">
+      Open {context.page.title}
+    </Button>
+  );
+}
+
+export default view;
+```
+
+`createView("/home")` is typed from the host schema, so `view.useContext()` returns the composed context object for that view path and all of its mounted ancestors — fully typed, no casting needed.
+
+## Rendering host components
+
+Components imported from `#tailorkit` don't render host HTML directly. When your app renders `<Button>`, TailorKit passes that instruction through to the host's React adapter, which decides how that named component looks and behaves.
+
+This means your app can only pass the fields, callbacks, and children declared in the host's component contract — not arbitrary props. The result is a UI that always fits the host product's design system, regardless of how your app is written.
+
+## Calling host actions
+
+Host actions are async server-side functions the host exposes for trusted work — things like writing data, triggering workflows, or running logic that requires host credentials. They're also available from `#tailorkit`:
+
+```tsx
+import { actions, Button } from "#tailorkit";
+
+<Button onClick={() => void actions.echo("Hello from the app")}>Send</Button>;
+```
+
+Actions always return promises. Use them for trusted server-side operations; use component callbacks for local UI events that don't need server involvement.
+
+## A complete view example
+
+Here's a full view file that combines context, a host component, and an action:
+
+```tsx src/views/default.tsx
+import { createView } from "@tailorkit/app";
+import { actions, Button } from "#tailorkit";
+
+const view = createView("/", {
+  component: HomeView,
+});
+
+function HomeView() {
+  const context = view.useContext();
+
+  return (
+    <Button onClick={() => void actions.echo("Hello")} variant="default">
+      Hello, {context.user?.name}!
+    </Button>
+  );
+}
+
+export default view;
+```
+
+## Building and previewing
+
+Once you've implemented views, you need to authenticate and make a first deployment before previewing. The first deployment creates the app record in the host and writes the generated `appId` back to `tailorkit.config.ts`.
+
+```sh
+pnpm exec tailorkit login
+pnpm deploy
+```
+
+When prompted during login, choose the named scope (for example, `user` or `organization`) this CLI session should be bound to. The resulting deploy token is scoped to that choice.
+
+After the initial deployment, start a live preview session:
+
+```sh
+pnpm exec tailorkit preview
+```
+
+The CLI runs Vite in watch mode and uploads each successful build to TailorKit in bounded chunks. Open the printed host link, sign in, and choose **Accept preview**. Your app then appears in the host's normal app list and renders in the host sandbox. Each complete rebuild replaces the running preview; a failed build leaves the last successful version in place. Stop the CLI to end the preview session — no local HTTP server is kept running.
+
+When you're ready to ship, build and deploy a production bundle:
+
+```sh
+pnpm build
+pnpm deploy
+```
+
+<Tip>
+  You can also run `tailorkit build` in CI and then `tailorkit deploy` to upload the pre-built artifact without rebuilding on the deploy machine.
+</Tip>
+
+## Keep apps focused
+
+TailorKit apps work best when they stay within the contract the host provides. Follow these guidelines:
+
+- **Use view context, not host internals.** The context from `view.useContext()` is everything your view is meant to know about the current state. Don't try to fetch host route data directly or drive host routing from app code.
+- **Import through `#tailorkit`.** The `#tailorkit` alias exposes the stable public surface of the generated bindings. Avoid importing from `src/tailorkit.gen.ts` paths directly — the internal structure can change when you regenerate.
+- **Regenerate when the host changes.** If a component prop disappears or a new view context field is added, `pnpm generate` will update your types. TypeScript will tell you what to fix.

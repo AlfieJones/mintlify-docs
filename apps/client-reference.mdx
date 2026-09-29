@@ -1,0 +1,156 @@
+---
+title: "App Client API Reference: defineClient and createView"
+sidebarTitle: "Client Reference"
+description: "Full reference for defineClient and createView from @tailorkit/app — the two functions that define every TailorKit app's structure and behavior."
+---
+
+The `@tailorkit/app` package exports two functions that every TailorKit app uses: `defineClient` to declare which views your app provides per slot, and `createView` to implement each individual view. Together they form the complete public API for the app side of TailorKit.
+
+---
+
+## `defineClient`
+
+`defineClient` registers a slot-to-view map that the TailorKit runtime uses to decide what to render when the host activates a view. Call it once in your app's entry file and export the result as the default export.
+
+```tsx src/client.ts
+import { defineClient } from "@tailorkit/app";
+
+export default defineClient({
+  slots: {
+    navbar: { "/": navigation },
+    panel: { "/users": generalTools, "/users/detail": detail },
+  },
+});
+```
+
+### Parameters
+
+<ParamField path="slots" type="object" required>
+  An object mapping slot names to view maps. Each slot name must be one of the slots declared in the generated host bindings. Each view map is an object whose keys are view paths and whose values are view definitions created with `createView`.
+</ParamField>
+
+### Slot and view map rules
+
+- **Slot names come from generated host bindings.** The available slot names are determined by the host schema. If the host doesn't publish a slot named `sidebar`, you can't register views for it.
+- **An omitted slot means unsupported.** If you leave out a slot entirely, your app makes no claim to render in that slot. The host treats it as if your app has nothing to show there.
+- **A `false` view entry explicitly disables a view.** Setting a view path's value to `false` tells TailorKit to disable that view in that slot and stop the slot from falling back to an ancestor view. Use this when you want to explicitly opt out of inheriting a parent view's behavior.
+- **View keys must match `createView` paths.** The key in the slot map (`"/users/detail"`) must exactly match the path string passed to `createView` in the view definition.
+- **A globally declared view can only appear in slots that list it.** The host schema controls which slots a given view path is valid for.
+
+---
+
+## `createView`
+
+`createView` defines a single view — its path, the component that renders when context is ready, and optional states for loading and error conditions.
+
+```tsx
+import { createView } from "@tailorkit/app";
+
+const detail = createView("/users/detail", {
+  component: UserTools,
+  loading: LoadingTools,
+  error: ContextError,
+});
+
+function UserTools() {
+  const { workspaceId, user } = detail.useContext();
+  return <UserActions user={user} />;
+}
+```
+
+### Parameters
+
+<ParamField path="path" type="string" required>
+  The view path this definition targets. Must exactly match a view path from the host schema and the corresponding key in your `defineClient` slot map.
+</ParamField>
+
+<ParamField path="options.component" type="React.ComponentType" required>
+  The component to render when context is fully ready. This is where you call `view.useContext()`.
+</ParamField>
+
+<ParamField path="options.loading" type="React.ComponentType" default="renders nothing">
+  An optional component to render while context is loading. If omitted, the slot renders nothing during loading.
+</ParamField>
+
+<ParamField path="options.error" type="React.ComponentType" default="renders nothing">
+  An optional component to render when context fails to load or a declared ancestor context is missing. If omitted, the slot renders nothing on error.
+</ParamField>
+
+### Return value
+
+`createView` returns a view definition object with the following members:
+
+<ResponseField name="path" type="string">
+  The path string passed to `createView`. Used internally by the runtime and available for inspection.
+</ResponseField>
+
+<ResponseField name="component" type="React.ComponentType">
+  The ready-state component passed in options.
+</ResponseField>
+
+<ResponseField name="useContext()" type="function">
+  A hook that returns the composed, typed context for this view and all of its mounted ancestor views. The shape is inferred from the host schema and fully typed by the generated bindings. Only callable while the `component` renders — calling it inside `loading` or `error` will throw.
+</ResponseField>
+
+<Note>
+  The `$meta` and `$runtime` properties on the returned object are internal sandbox details used by the TailorKit runtime. Do not read or write them in app code.
+</Note>
+
+### How slot resolution works
+
+Each host slot independently selects exactly one view to render. The resolution order is:
+
+1. The slot searches the active view path (the most specific path the host has navigated to).
+2. If no match is found in that slot, it walks up to ancestor paths.
+3. A `false` entry stops the search — no further ancestors are checked for that slot.
+4. If no match is found at any level, the slot renders nothing.
+
+This means a detail view at `/users/detail` replaces the general view at `/users` in the same slot, while other slots resolve their own active views independently.
+
+<Warning>
+  Missing declared ancestor context produces an error state, not a fallback to another view. Neither the `loading` nor `error` handler triggers slot fallback — they're only lifecycle states for the selected view.
+</Warning>
+
+### Full example
+
+```tsx src/views/detail.tsx
+import { createView } from "@tailorkit/app";
+
+const detail = createView("/users/detail", {
+  component: UserTools,
+  loading: LoadingTools,
+  error: ContextError,
+});
+
+function UserTools() {
+  const { workspaceId, user } = detail.useContext();
+  return <UserActions user={user} />;
+}
+
+function LoadingTools() {
+  return <span>Loading…</span>;
+}
+
+function ContextError() {
+  return <span>Failed to load user context.</span>;
+}
+
+export default detail;
+```
+
+And the corresponding `defineClient` registration:
+
+```tsx src/client.ts
+import { defineClient } from "@tailorkit/app";
+import generalTools from "./views/general";
+import detail from "./views/detail";
+
+export default defineClient({
+  slots: {
+    panel: {
+      "/users": generalTools,
+      "/users/detail": detail,
+    },
+  },
+});
+```

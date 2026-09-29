@@ -1,0 +1,368 @@
+---
+title: "TailorKit CLI Command Reference"
+sidebarTitle: "Commands"
+description: "Complete syntax, options, and usage examples for every TailorKit CLI command, from scaffolding to authentication to deployment."
+---
+
+This page is the complete reference for every command the TailorKit CLI exposes. Each command reads your `tailorkit.config.ts` to locate the host and app configuration, so most workflows assume you are running from the root of a scaffolded project.
+
+## Global option
+
+All commands accept this option alongside their own flags.
+
+<ParamField path="--cwd" type="string" default=".">
+  Working directory the CLI operates from. Useful in monorepos or CI pipelines when you want to target a specific package directory without changing your shell's current directory.
+</ParamField>
+
+```sh
+tailorkit <command> --cwd packages/my-tailorkit-app
+```
+
+---
+
+## `tailorkit init`
+
+Scaffold a new TailorKit app project. Running the command without flags launches an interactive wizard that prompts for every value; pass flags to skip individual prompts.
+
+```sh
+tailorkit init [directory]
+```
+
+**Positional argument**
+
+<ParamField path="directory" type="string">
+  Target directory to create the project in. Defaults to the current working directory. The package name is appended as a subdirectory, so `tailorkit init apps` with name `my-app` creates `apps/my-app/`.
+</ParamField>
+
+**Options**
+
+<ParamField path="--name" type="string">
+  Package name used in `package.json`. The CLI normalises the value to lowercase and replaces any invalid characters with hyphens. Prompted interactively when omitted.
+</ParamField>
+
+<ParamField path="--host" type="string">
+  Full URL to the TailorKit endpoint on your host app (e.g. `https://app.example.com/api/tailorkit`). Prompted interactively when omitted.
+</ParamField>
+
+<ParamField path="--package-manager" type="string">
+  Package manager to use for the generated project. Accepted values: `bun`, `yarn`, `pnpm`, `npm`. Prompted interactively when omitted.
+</ParamField>
+
+<ParamField path="--lint / --no-lint" type="boolean">
+  Add [oxlint](https://oxc.rs/docs/guide/usage/linter) to the scaffolded project. Pass `--no-lint` to skip. Prompted interactively when omitted.
+</ParamField>
+
+<ParamField path="--format / --no-format" type="boolean">
+  Add [oxfmt](https://oxc.rs/docs/guide/usage/formatter) to the scaffolded project. Pass `--no-format` to skip. Prompted interactively when omitted.
+</ParamField>
+
+<ParamField path="--install / --no-install" type="boolean">
+  Run the package manager's `install` command after scaffolding. Pass `--no-install` to skip. Prompted interactively when omitted.
+</ParamField>
+
+<ParamField path="--force" type="boolean">
+  Overwrite existing files if the target directory already contains matching paths. When omitted and the directory exists, the CLI asks before overwriting.
+</ParamField>
+
+**Example**
+
+```sh
+tailorkit init my-app \
+  --name my-app \
+  --host http://localhost:3000/api/tailorkit \
+  --package-manager pnpm
+```
+
+---
+
+## `tailorkit generate`
+
+Fetch the schema from a running host app and regenerate the typed TypeScript bindings for your project. Run this command whenever the host adds new views, slots, components, or actions, and then commit the updated file.
+
+```sh
+tailorkit generate
+```
+
+<Note>
+  The host app must be running and reachable at the URL specified in your `tailorkit.config.ts` for this command to succeed.
+</Note>
+
+**Options**
+
+<ParamField path="--config" type="string">
+  Path to the `tailorkit.config.ts` file. Defaults to auto-discovery from the working directory.
+</ParamField>
+
+<ParamField path="--out" type="string" default="src/tailorkit.gen.ts">
+  File path where the generated TypeScript bindings are written. The file is overwritten on every run.
+</ParamField>
+
+**Example**
+
+```sh
+# Regenerate bindings using the default output path
+tailorkit generate
+
+# Write to a custom location
+tailorkit generate --out src/generated/host.ts
+```
+
+---
+
+## `tailorkit login`
+
+Authenticate the CLI with a host app using a device-code flow. The CLI requests a short user code from the host, displays it in the terminal, and optionally opens the approval URL in your browser. Once you approve the request in the host app, the CLI stores a deploy token in `~/.tailorkit/auth.json`.
+
+```sh
+tailorkit login
+```
+
+**Options**
+
+<ParamField path="--config" type="string">
+  Path to the `tailorkit.config.ts` file used to resolve the host URL.
+</ParamField>
+
+<ParamField path="--open / --no-open" type="boolean" default="true">
+  Open the approval URL automatically in your default browser. Pass `--no-open` to disable browser launch and copy the URL manually.
+</ParamField>
+
+<ParamField path="--timeout" type="number" default="1800">
+  Maximum number of seconds to wait for the user to approve the login request. Defaults to 30 minutes. Must be a positive integer.
+</ParamField>
+
+**Authentication flow**
+
+<Steps>
+  <Step title="Start the flow">
+    Run `tailorkit login`. The CLI contacts the host and receives a one-time user code.
+  </Step>
+  <Step title="Approve in the host app">
+    The CLI prints the user code and an approval URL like `https://app.example.com/api/tailorkit/cli-auth/approve?code=XXXX-XXXX`. Visit that URL (or let the CLI open it) and confirm the code.
+  </Step>
+  <Step title="Credentials stored">
+    Once approved, the CLI writes a deploy token scoped to your session into `~/.tailorkit/auth.json` with file permissions `0600`.
+  </Step>
+</Steps>
+
+**Example**
+
+```sh
+# Default: opens the browser automatically
+tailorkit login
+
+# Headless: print the URL without opening a browser
+tailorkit login --no-open
+
+# Short timeout for scripted flows
+tailorkit login --timeout 120
+```
+
+---
+
+## `tailorkit logout`
+
+Remove stored credentials for the host app specified in your config. If no credentials are found for that host, the command exits cleanly with an informational message.
+
+```sh
+tailorkit logout
+```
+
+**Options**
+
+<ParamField path="--config" type="string">
+  Path to the `tailorkit.config.ts` file used to resolve the host URL.
+</ParamField>
+
+**Example**
+
+```sh
+tailorkit logout
+```
+
+---
+
+## `tailorkit whoami`
+
+Print the host URL and the current authentication scope for the credentials stored in `~/.tailorkit/auth.json`. The CLI verifies the stored token against the live host before displaying results, so an expired or revoked token surfaces as an error.
+
+```sh
+tailorkit whoami
+```
+
+**Options**
+
+<ParamField path="--config" type="string">
+  Path to the `tailorkit.config.ts` file used to resolve the host URL.
+</ParamField>
+
+**Example output**
+
+```
+◆ TailorKit
+│
+○ Host:  https://app.example.com/api/tailorkit
+○ Scope: {"name":"organization","value":{"id":"org_abc123"}}
+│
+◇ Authenticated.
+```
+
+**Example**
+
+```sh
+tailorkit whoami
+```
+
+---
+
+## `tailorkit preview`
+
+Start a live development preview session. The CLI runs Vite in watch mode, and every time a build completes successfully it uploads the new bundle to the host over a WebSocket tunnel. The host renders the latest build for anyone viewing the preview share link.
+
+```sh
+tailorkit preview
+```
+
+<Note>
+  You must run `tailorkit deploy` at least once before starting a preview — the `appId` field in `tailorkit.config.ts` must be set. You also need to be logged in via `tailorkit login`.
+</Note>
+
+**Options**
+
+<ParamField path="--config" type="string">
+  Path to the `tailorkit.config.ts` file.
+</ParamField>
+
+<ParamField path="--entry" type="string">
+  Client entry file passed to the Vite build. Defaults to the value in your config, then `./src/client.ts`.
+</ParamField>
+
+<ParamField path="--out-dir" type="string">
+  Directory where Vite writes build output. Defaults to the value in your config, then `.tailorkit`.
+</ParamField>
+
+<ParamField path="--mode" type="string">
+  Vite mode string (e.g. `development`, `staging`). Passed through to the Vite build.
+</ParamField>
+
+<ParamField path="--replace" type="boolean">
+  End any existing active preview for this app and start a fresh session. Without this flag the CLI errors if a session is already running.
+</ParamField>
+
+**Behaviour**
+
+- The CLI prints a **Host preview** link. Share that URL with teammates — they see the same live build you are working on.
+- Uploads are debounced by 500 ms after a successful `BUNDLE_END` event.
+- The CLI reconnects automatically if the WebSocket drops, with exponential backoff up to 30 s.
+- Press `Ctrl+C` (or send `SIGTERM`) to end the session. The CLI stops the Vite watcher and closes the preview tunnel on the host before exiting.
+- A session that is ended server-side (e.g. the host revokes it) prints a warning and exits — start a new session with `tailorkit preview` or `tailorkit preview --replace`.
+
+**Example**
+
+```sh
+# Start a preview session
+tailorkit preview
+
+# Replace a running session and start fresh
+tailorkit preview --replace
+```
+
+---
+
+## `tailorkit build`
+
+Produce a production-ready bundle locally without uploading it. Useful for inspecting the output, running it through CI checks, or separating the build step from the deploy step in a pipeline.
+
+```sh
+tailorkit build
+```
+
+**Options**
+
+<ParamField path="--config" type="string">
+  Path to the `tailorkit.config.ts` file.
+</ParamField>
+
+<ParamField path="--entry" type="string">
+  Client entry file. Defaults to the value in your config, then `./src/client.ts`.
+</ParamField>
+
+<ParamField path="--out-dir" type="string">
+  Build output directory. Defaults to the value in your config, then `.tailorkit`.
+</ParamField>
+
+<ParamField path="--mode" type="string">
+  Vite mode string passed through to the build.
+</ParamField>
+
+**Example**
+
+```sh
+# Build to the default output directory
+tailorkit build
+
+# Build for a staging environment
+tailorkit build --mode staging --out-dir dist/staging
+```
+
+---
+
+## `tailorkit deploy`
+
+Build the app and publish a new deployment to the host. The CLI runs a type check alongside the Vite build, uploads the compiled bundle to the TailorKit CDN, and rolls out the deployment. If the `appId` in your config is missing or no longer exists on the host, the CLI prompts you to create a new app and writes the new ID back into `tailorkit.config.ts` automatically.
+
+```sh
+tailorkit deploy
+```
+
+<Tip>
+  Run `tailorkit login` before deploying. The CLI reads the stored deploy token for the host URL in your config.
+</Tip>
+
+**Options**
+
+<ParamField path="--config" type="string">
+  Path to the `tailorkit.config.ts` file.
+</ParamField>
+
+<ParamField path="--entry" type="string">
+  Client entry file. Defaults to the value in your config, then `./src/client.ts`.
+</ParamField>
+
+<ParamField path="--out-dir" type="string">
+  Build output directory. Defaults to the value in your config, then `.tailorkit`.
+</ParamField>
+
+<ParamField path="--mode" type="string">
+  Vite mode string passed through to the Vite build.
+</ParamField>
+
+**Behaviour**
+
+- The Vite build and TypeScript type check run concurrently. If the type check fails but the build succeeds, the CLI asks whether to upload anyway.
+- If no `appId` is set in `tailorkit.config.ts`, the CLI prompts you to name a new app and writes the generated ID back into your config file automatically.
+- After a successful upload, the deployment is published and rolled out immediately. The CLI prints the host URL, app ID, deployment ID, and a per-file size summary.
+
+**Example**
+
+```sh
+# Deploy the current app
+tailorkit deploy
+
+# Deploy from a monorepo subdirectory
+tailorkit deploy --cwd packages/crm-extension
+```
+
+**Example output**
+
+```
+◆ TailorKit
+│
+○ Host:       https://app.example.com/api/tailorkit
+○ App:        app_01jz9qwerty
+○ Deployment: dep_01jz9qwerty
+○ Uploaded files:
+○   client.js  42.1 KB raw, 14.3 KB gzip
+│
+◇ Deployment published.
+```

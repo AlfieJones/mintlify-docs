@@ -1,0 +1,251 @@
+---
+title: Expose Server-Side Actions to TailorKit Apps
+sidebarTitle: Actions
+description: Define typed server-side functions that TailorKit apps can call for trusted work like database writes, API calls, and permission checks.
+---
+
+Actions are server-side functions that your host app exposes to TailorKit extensions. Every action handler runs on your server under your authentication context, making actions the right place for anything that must stay under your control: database writes, permission checks, payment operations, invites, role changes, and any calls to internal or third-party APIs.
+
+Callbacks handle UI events. Actions handle trusted work. That distinction matters — keep it clear in your design.
+
+## Create an action builder
+
+Use `createActions()` to create a reusable action builder. If your action handlers need access to host state like the current user, add a typed context with `.context<...>()`.
+
+```ts src/lib/tailorkit.ts
+import { createActions } from "tailorkit";
+
+const action = createActions().context<{
+  user: { id: string; name: string };
+}>();
+```
+
+The type you pass to `.context<>()` controls the `context` value available inside every action built from this instance.
+
+<Note>
+All actions in a single TailorKit instance must share the same context type. Create one shared action builder and reuse it across all your action files.
+</Note>
+
+## Define an action
+
+Chain `.input()`, `.output()`, and `.handler()` on the builder to create a complete action. The handler runs on your server and receives both validated `input` and the `context` you return from `authenticate`.
+
+```ts src/lib/tailorkit.ts
+import { createActions, createTailorKit } from "tailorkit";
+import { z } from "zod";
+
+const action = createActions().context<{
+  user: { id: string; name: string };
+}>();
+
+export const tailorKit = createTailorKit({
+  components: {},
+  scopes: { user: z.object({ userId: z.string().min(1) }) },
+
+  actions: {
+    echo: action
+      .input(z.string())
+      .output(z.string())
+      .handler(({ input, context }) => `${context.user.name} said '${input}'`),
+  },
+});
+```
+
+Define both input and output schemas explicitly. TailorKit uses them to generate the typed contract between apps and your backend, and to validate data at the action boundary at runtime.
+
+```ts
+const createTodo = action
+  .input(
+    z.object({
+      title: z.string().min(1),
+    }),
+  )
+  .output(
+    z.object({
+      id: z.string(),
+      title: z.string(),
+    }),
+  )
+  .handler(async ({ input, context }) => {
+    const todo = await db.todo.create({
+      data: {
+        title: input.title,
+        userId: context.user.id,
+      },
+    });
+
+    return {
+      id: todo.id,
+      title: todo.title,
+    };
+  });
+```
+
+## Pass context from the handler
+
+Return `actionContext` from your `authenticate` callback. TailorKit calls `authenticate` for every route that requires your app's authenticated user and forwards the returned value to action handlers.
+
+```ts app/api/tailorkit/[...tailorkit]/route.ts
+import { auth } from "#lib/auth";
+import { tailorKit } from "#lib/tailorkit";
+
+async function handleRequest(request: Request) {
+  return tailorKit.handler(request, {
+    authenticate: async () => {
+      const session = await auth(request);
+
+      if (!session) {
+        return null;
+      }
+
+      return {
+        actionContext: {
+          user: {
+            id: session.user.id,
+            name: session.user.name,
+          },
+        },
+        scopes: { user: { userId: session.user.id } },
+      };
+    },
+  });
+}
+
+export const GET = handleRequest;
+export const POST = handleRequest;
+```
+
+Return `null` when the request is unauthenticated. TailorKit rejects host-authenticated routes while still allowing TailorKit-managed deploy-token routes to use their own authentication mechanism.
+
+## Organize actions in larger projects
+
+Small projects can define actions directly in `tailorkit.ts`. Larger codebases are easier to maintain when actions live in dedicated files organized by domain.
+
+```txt
+src/
+  lib/
+    tailorkit.ts
+    tailorkit/
+      actions/
+        index.ts
+        messages.ts
+        projects.ts
+```
+
+Create one shared action builder that exports the context type:
+
+```ts src/lib/tailorkit/actions/index.ts
+import { createActions } from "tailorkit";
+
+export const action = createActions().context<{
+  user: { id: string; name: string };
+}>();
+
+export { messageActions } from "./messages";
+export { projectActions } from "./projects";
+```
+
+Then define actions by domain, importing the shared builder:
+
+```ts src/lib/tailorkit/actions/messages.ts
+import { z } from "zod";
+import { action } from "./index";
+
+export const messageActions = {
+  send: action
+    .input(
+      z.object({
+        body: z.string().min(1),
+        channelId: z.string(),
+      }),
+    )
+    .output(
+      z.object({
+        id: z.string(),
+      }),
+    )
+    .handler(async ({ input, context }) => {
+      const message = await db.message.create({
+        data: {
+          body: input.body,
+          channelId: input.channelId,
+          userId: context.user.id,
+        },
+      });
+
+      return { id: message.id };
+    }),
+};
+```
+
+## Nest actions
+
+Actions can be nested to keep larger action sets readable and to give apps a predictable call path.
+
+```ts src/lib/tailorkit.ts
+import { createTailorKit } from "tailorkit";
+import { messageActions, projectActions } from "./tailorkit/actions";
+import { z } from "zod";
+
+export const tailorKit = createTailorKit({
+  components: {},
+  scopes: { user: z.object({ userId: z.string().min(1) }) },
+
+  actions: {
+    messages: messageActions,
+    projects: projectActions,
+  },
+});
+```
+
+With this structure, generated app bindings expose actions by path — `messages.send`, `projects.archive` — making the call sites self-documenting.
+
+```ts
+import { actions } from "#tailorkit";
+
+const message = await actions.messages.send({
+  body: "Hello",
+  channelId: "general",
+});
+```
+
+## Callbacks vs actions
+
+Use **callbacks** for component events that happen in the UI — `onClick`, `onOpenChange`, `onValueChange`. Use **actions** when the app needs your backend to perform trusted work.
+
+```ts
+// Callback: the app hears that a button was clicked.
+const Button = {
+  callbacks: {
+    onClick: {},
+  },
+  children: true,
+};
+
+// Action: the app asks your backend to do real work.
+const inviteUser = action
+  .input(z.object({ email: z.string().email() }))
+  .output(z.object({ inviteId: z.string() }))
+  .handler(async ({ input, context }) => {
+    // ... send invite email, write to DB, etc.
+  });
+```
+
+A callback tells the app a button was clicked. An action creates a record, sends an invite, charges a customer, or calls an internal service.
+
+## Best practices
+
+<CardGroup cols={2}>
+<Card title="Keep actions focused" icon="crosshairs">
+  One action should do one piece of trusted work. Avoid building catch-all actions that branch on a `type` parameter.
+</Card>
+<Card title="Use narrow input schemas" icon="filter">
+  Require the fields you need. Use enums for controlled values and add string length or number range constraints wherever possible.
+</Card>
+<Card title="Return only what's needed" icon="eye-slash">
+  Don't return secrets, tokens, internal IDs, or sensitive metadata unless the TailorKit app genuinely requires them.
+</Card>
+<Card title="Use context for identity" icon="key">
+  Use `context` for user identity, permissions, and tenant-aware queries. Use named `scopes` to match the boundaries where apps are installed.
+</Card>
+</CardGroup>

@@ -1,0 +1,165 @@
+---
+title: "Deploy TailorKit Apps to Production"
+sidebarTitle: "Deploying"
+description: "Authenticate the TailorKit CLI, run your first deployment, iterate with live preview, and ship a production bundle — all from the command line."
+---
+
+Deploying a TailorKit app involves three phases: authenticating the CLI with your host, making an initial deployment to register the app, and then either running a live preview session during development or shipping a production bundle when you're ready to release.
+
+## Authentication
+
+Before you can deploy or preview, you need to authenticate the CLI with the host app. Run:
+
+```sh
+tailorkit login
+```
+
+The CLI will open a page in your host app where you choose the named scope — for example, `user` or `organization` — that this CLI session should be bound to. The resulting deploy token is stored locally and scoped to that choice. All subsequent `deploy` and `preview` commands use this token automatically.
+
+Use these commands to inspect and manage your current auth state:
+
+```sh
+# Check who you're currently logged in as
+tailorkit whoami
+
+# Remove stored credentials for the current host
+tailorkit logout
+```
+
+<Tip>
+  If you work with multiple host environments (for example, staging and production), run `tailorkit login` again with a different `host` value in your `tailorkit.config.ts` to authenticate against a separate environment.
+</Tip>
+
+## The `tailorkit.config.ts` file
+
+Your app's configuration lives in `tailorkit.config.ts` at the project root. At minimum it needs the host URL. After your first deployment, the CLI writes your `appId` here automatically.
+
+```ts tailorkit.config.ts
+import { defineConfig } from "@tailorkit/app/config";
+
+export default defineConfig({
+  host: "https://myapp.example.com/api/tailorkit",
+  appId: "app_abc123",
+});
+```
+
+The full set of options:
+
+<ParamField path="host" type="string" required>
+  The full URL of the host app's TailorKit handler. Used for schema generation, preview sessions, and deployments.
+</ParamField>
+
+<ParamField path="appId" type="string">
+  The app's unique identifier on the host. Written automatically by `tailorkit deploy` on first deployment. You can also set it manually if you already have an ID.
+</ParamField>
+
+<ParamField path="client.entry" type="string" default="./src/client.ts">
+  Path to the app's client entry file, relative to the project root.
+</ParamField>
+
+<ParamField path="build.outDir" type="string" default=".tailorkit">
+  Directory where the build output is written before upload.
+</ParamField>
+
+<ParamField path="logos.dark" type="string">
+  Optional path to a dark-mode logo asset (PNG, SVG, or WebP).
+</ParamField>
+
+<ParamField path="logos.light" type="string">
+  Optional path to a light-mode logo asset (PNG, SVG, or WebP).
+</ParamField>
+
+## First-time deployment
+
+If you haven't deployed before, the CLI doesn't yet have an `appId` to deploy to. Here's the full flow for getting from a freshly scaffolded app to a registered, deployed extension:
+
+<Steps>
+  <Step title="Authenticate with the host">
+    Run `tailorkit login` and complete the browser-based auth flow. Choose the scope you want to bind this session to.
+
+    ```sh
+    pnpm exec tailorkit login
+    ```
+  </Step>
+
+  <Step title="Generate host bindings">
+    With the host running, pull the current schema:
+
+    ```sh
+    pnpm generate
+    ```
+
+    This writes `src/tailorkit.gen.ts` and makes your components and actions available under `#tailorkit`.
+  </Step>
+
+  <Step title="Deploy to create the app record">
+    Run the deploy command. Because no `appId` exists yet, the CLI will prompt you to create a new TailorKit app on the host:
+
+    ```sh
+    pnpm deploy
+    ```
+
+    Confirm the prompt, and the CLI registers your app, writes the new `appId` to `tailorkit.config.ts`, and uploads the initial bundle.
+  </Step>
+
+  <Step title="Verify the deployment">
+    Run `tailorkit whoami` to confirm you're authenticated, and check your host's app management UI to see the newly created app record.
+
+    ```sh
+    pnpm exec tailorkit whoami
+    ```
+  </Step>
+</Steps>
+
+## Preview vs. production
+
+TailorKit distinguishes between two deployment modes: **preview** for active development and **production** for shipped releases.
+
+### Preview
+
+A preview session runs Vite in watch mode and uploads each successful build to TailorKit as you save files. It's ephemeral — stopping the CLI ends the session immediately, and the preview bundle is discarded.
+
+```sh
+pnpm exec tailorkit preview
+```
+
+After starting, the CLI prints a host URL. Open it while signed in to the host and choose **Accept preview**. Your app then appears alongside installed apps in the host sandbox with your full host context and action permissions. Failed builds leave the last successful preview running; successful rebuilds replace it.
+
+<Note>
+  No local HTTP server is started during preview. The CLI uploads builds directly to TailorKit's infrastructure and the host fetches the bundle from there.
+</Note>
+
+### Production
+
+When you're ready to release, build and deploy a production bundle. The CLI typechecks your entry file, runs the production Vite build, and uploads the result:
+
+```sh
+pnpm build
+pnpm deploy
+```
+
+You can also run both steps in a single command:
+
+```sh
+pnpm deploy
+```
+
+`tailorkit deploy` always builds before uploading unless you pass a pre-built output directory explicitly.
+
+## CI/CD deployment
+
+For automated pipelines, separate the build and upload steps:
+
+```sh
+# In your CI build step
+pnpm exec tailorkit build
+
+# In your CI deploy step (after build artifacts are available)
+pnpm exec tailorkit deploy
+```
+
+Store your deploy token as a CI secret and set the `TAILORKIT_TOKEN` environment variable so the CLI can authenticate without an interactive login flow. Check `tailorkit deploy --help` for the exact environment variable name your host version supports.
+
+<Warning>
+  Never commit deploy tokens to source control. Use your CI platform's secret management to inject credentials at deploy time.
+</Warning>

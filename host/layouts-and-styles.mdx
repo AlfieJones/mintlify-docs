@@ -1,0 +1,302 @@
+---
+title: Layout Primitives and Theme Tokens for Apps
+sidebarTitle: Layouts & Styles
+description: Expose responsive layout primitives and named theme tokens so TailorKit apps build UI that matches your product's design system automatically.
+---
+
+TailorKit apps should express layout intent through primitives and theme tokens, never through raw CSS, class names, or host internals. Your host owns the design system — primitives give apps a typed vocabulary for layout and styling that resolves to your actual CSS variables at render time.
+
+## Add primitives to the host schema
+
+Spread `primitives()` into your `components` map inside `createTailorKit`. You can pass an optional theme configuration to define the token values available to apps. The primitives helper is available for Zod, Valibot, and ArkType.
+
+<Tabs>
+<Tab title="Zod">
+
+```ts src/lib/tailorkit.ts
+import { createTailorKit, type TailorKitTheme } from "tailorkit";
+import { primitives } from "tailorkit/zod";
+import { z } from "zod";
+
+const theme: TailorKitTheme = {
+  tokens: {
+    background: {
+      surface: "var(--card)",
+      muted: "var(--muted)",
+    },
+    borderColor: {
+      default: "var(--border)",
+    },
+    textColor: {
+      muted: "var(--muted-foreground)",
+    },
+  },
+};
+
+export const tailorKit = createTailorKit({
+  scopes: { user: z.object({ userId: z.string().min(1) }) },
+  components: {
+    ...primitives(theme),
+  },
+});
+```
+
+</Tab>
+<Tab title="Valibot">
+
+```ts src/lib/tailorkit.ts
+import { createTailorKit, type TailorKitTheme } from "tailorkit";
+import { primitives } from "tailorkit/valibot";
+import * as v from "valibot";
+
+const theme: TailorKitTheme = {
+  tokens: {
+    background: {
+      surface: "var(--card)",
+      muted: "var(--muted)",
+    },
+    borderColor: {
+      default: "var(--border)",
+    },
+    textColor: {
+      muted: "var(--muted-foreground)",
+    },
+  },
+};
+
+export const tailorKit = createTailorKit({
+  scopes: { user: v.object({ userId: v.pipe(v.string(), v.minLength(1)) }) },
+  components: {
+    ...primitives(theme),
+  },
+});
+```
+
+</Tab>
+<Tab title="ArkType">
+
+```ts src/lib/tailorkit.ts
+import { createTailorKit, type TailorKitTheme } from "tailorkit";
+import { primitives } from "tailorkit/arktype";
+import { type } from "arktype";
+
+const theme: TailorKitTheme = {
+  tokens: {
+    background: {
+      surface: "var(--card)",
+      muted: "var(--muted)",
+    },
+    borderColor: {
+      default: "var(--border)",
+    },
+    textColor: {
+      muted: "var(--muted-foreground)",
+    },
+  },
+};
+
+export const tailorKit = createTailorKit({
+  scopes: { user: type({ userId: "string >= 1" }) },
+  components: {
+    ...primitives(theme),
+  },
+});
+```
+
+</Tab>
+</Tabs>
+
+Keep the shared `theme` object in a module that is safe to import from both server configuration and the browser client.
+
+## Add primitive renderers to the client
+
+Spread the React primitive renderers into your `createTailorKitClient` components map, and pass the same theme object so the renderers can resolve token names to scoped CSS variables. Custom host components can sit beside them.
+
+```tsx src/lib/tailorkit-client.tsx
+import { Button } from "@/components/button";
+import { createTailorKitClient, primitives } from "tailorkit/react";
+import type { tailorKit } from "./tailorkit";
+import { theme } from "./theme";
+
+export const tailorClient = createTailorKitClient<typeof tailorKit>({
+  baseUrl: "/api/tailorkit",
+  theme,
+  components: {
+    ...primitives,
+    Button: ({ props, children }) => (
+      <Button variant={props.variant} onClick={props.onClick}>
+        {children}
+      </Button>
+    ),
+  },
+});
+
+export const { AppView, useApps, useView } = tailorClient;
+
+export default tailorClient;
+```
+
+## Use primitives in an app
+
+After running `tailorkit generate`, apps import primitive bindings from `#tailorkit`. The generated types check token names and breakpoint keys against the host schema at compile time.
+
+```tsx
+import { Box, Flex, Grid } from "#tailorkit";
+
+export function Content() {
+  return (
+    <Box background="surface" padding="lg" radius="md">
+      <Flex align="center" direction={{ base: "column", md: "row" }} gap="md">
+        <Grid columns={{ base: 1, md: 2, lg: 3 }} gap="lg">
+          Content
+        </Grid>
+      </Flex>
+    </Box>
+  );
+}
+```
+
+<Warning>
+Do not expose `className`, arbitrary CSS, or host styling internals to apps. Stick to primitives, theme tokens, and product-specific host components. This keeps app UI consistent with your design system and protects you from breaking changes when you restyle components.
+</Warning>
+
+## Available primitives
+
+All primitive props are responsive unless the generated type says otherwise. Pass a plain value for all breakpoints, or an object with breakpoint keys for responsive overrides.
+
+```tsx
+// Same value at all breakpoints
+<Box padding="lg" />
+
+// Responsive override
+<Grid columns={{ base: 1, md: 2, lg: 3 }} gap="lg" />
+```
+
+### Box
+
+A block container with spacing, sizing, surface, overflow, and text props. `Box` is the foundation — `Flex`, `Grid`, and `Inline` all include its props.
+
+**Key props:** `background`, `border`, `borderColor`, `height`, `margin`, `minHeight`, `minWidth`, `overflow`, `overflowWrap`, `padding`, `radius`, `textAlign`, `textColor`, `textOverflow`, `textTransform`, `width`
+
+### Flex
+
+A flex container. Includes every `Box` prop plus flex-specific layout controls.
+
+**Additional props:** `align`, `direction`, `gap`, `justify`, `wrap`
+
+### Grid
+
+A grid container. Includes every `Box` prop plus grid-specific layout controls.
+
+**Additional props:** `columns`, `gap`
+
+### Inline
+
+Inline text and content styling. Supports spacing, surface color, radius, and text props — useful for badges, labels, and inline decorated text.
+
+## Theme tokens
+
+Theme tokens are named values you configure on the host schema. Primitive props reference token names; the React renderer converts them into scoped CSS variables at runtime.
+
+### Breakpoints
+
+Breakpoints control responsive primitive props. The defaults match common Tailwind breakpoints:
+
+| Token | Value          |
+| ----- | -------------- |
+| `base`  | no media query |
+| `sm`    | `640px`        |
+| `md`    | `768px`        |
+| `lg`    | `1024px`       |
+| `xl`    | `1280px`       |
+| `2xl`   | `1536px`       |
+
+### Background colors
+
+Used by the `background` prop. No defaults are provided — define the surface names you want apps to use.
+
+```ts
+background: {
+  surface: "var(--card)",
+  muted: "var(--muted)",
+  subtle: "var(--secondary)",
+}
+```
+
+### Border colors
+
+Used by the `borderColor` prop. No defaults are provided.
+
+```ts
+borderColor: {
+  default: "var(--border)",
+  focus: "var(--ring)",
+}
+```
+
+### Text colors
+
+Used by the `textColor` prop. No defaults are provided.
+
+```ts
+textColor: {
+  default: "var(--foreground)",
+  muted: "var(--muted-foreground)",
+}
+```
+
+### Spacing
+
+Used by `padding`, `margin`, and `gap`. Built-in defaults:
+
+`none`, `2xs`, `xs`, `sm`, `md`, `lg`, `xl`, `2xl`, `3xl`
+
+### Radius
+
+Used by the `radius` prop. Built-in defaults:
+
+`none`, `2xs`, `xs`, `sm`, `md`, `lg`, `xl`, `2xl`, `3xl`
+
+### Size
+
+Used by `width` and `height`. Built-in defaults:
+
+`0`, fractions from `1/2` through `11/12`, `full`, `min`, `max`, `fit`
+
+### Border styles
+
+Used by the `border` prop. Built-in defaults: `solid`, `dashed`, `dotted`, `double`
+
+### Overflow
+
+Used by the `overflow` prop. Built-in defaults: `visible`, `hidden`, `clip`, `scroll`, `auto`
+
+### Overflow wrap
+
+Used by the `overflowWrap` prop. Built-in defaults: `normal`, `breakWord`, `anywhere`
+
+### Text align
+
+Used by the `textAlign` prop. Built-in defaults: `left`, `right`, `start`, `end`, `center`, `justify`
+
+### Text overflow
+
+Used by the `textOverflow` prop. Built-in defaults: `clip`, `ellipsis`
+
+### Text transform
+
+Used by the `textTransform` prop. Built-in defaults: `capitalize`, `uppercase`, `lowercase`, `none`
+
+## Prop reference
+
+<Accordion title="Box props">
+`background`, `basis`, `border`, `borderColor`, `grow`, `height`, `margin`, `minHeight`, `minWidth`, `overflow`, `overflowWrap`, `padding`, `radius`, `shrink`, `textAlign`, `textColor`, `textOverflow`, `textTransform`, `width`
+</Accordion>
+
+<Accordion title="Flex additional props">
+`align: "start" | "center" | "end" | "stretch"`, `direction: "row" | "column"`, `gap`, `justify: "start" | "center" | "end" | "between"`, `wrap: "wrap" | "nowrap" | "wrap-reverse"`
+</Accordion>
+
+<Accordion title="Grid additional props">
+`columns: 1 | 2 | 3 | 4 | 6 | 12`, `gap`
+</Accordion>

@@ -1,0 +1,76 @@
+---
+title: "TailorKit: Embed a Sandboxed App Ecosystem in Your SaaS"
+sidebarTitle: "Introduction"
+description: "TailorKit is an open-source framework for embedding a sandboxed app ecosystem directly in your SaaS product, keeping your team in full control of routing, data, and design."
+---
+
+TailorKit lets you add an app ecosystem directly into your product. Users, partners, and AI can build extensions that run in a secure sandbox and render through the components, data, and actions you choose to expose — so every extension looks and feels built in. Your host app stays in control of routing, permissions, auth, and the design system at all times.
+
+<CardGroup cols={2}>
+  <Card title="How It Works" icon="lightbulb" href="/how-it-works">
+    Understand the host, app, schema contract, and sandboxed runtime model.
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Create a TailorKit app, generate typed host bindings, and preview it live.
+  </Card>
+  <Card title="Host Integration" icon="plug" href="/host/installation">
+    Install TailorKit and wire it into the SaaS product that will host extensions.
+  </Card>
+  <Card title="Building Apps" icon="code" href="/apps/overview">
+    Build a TailorKit app that targets host views, components, and actions.
+  </Card>
+</CardGroup>
+
+## What TailorKit provides
+
+TailorKit covers the full stack of concerns for safely embedding third-party and AI-generated extensions inside a production SaaS product.
+
+<CardGroup cols={2}>
+  <Card title="Sandboxed opaque-origin iframe runtime" icon="shield-halved">
+    App code runs inside a hidden, opaque-origin iframe with a strict CSP. App DOM never becomes part of the host document.
+  </Card>
+  <Card title="Host-controlled component contract" icon="layer-group">
+    The host publishes a typed schema of allowed components, props, children, and callbacks. Apps can only render what you expose.
+  </Card>
+  <Card title="Typed schema adapters" icon="brackets-curly">
+    Define your schema with Zod, Valibot, or ArkType. TailorKit auto-generates typed bindings for app developers.
+  </Card>
+  <Card title="Server-side trusted actions" icon="server">
+    Expose safe, host-owned server functions that apps can call. Sensitive work — auth, data writes, clipboard — stays in your runtime.
+  </Card>
+  <Card title="CLI tooling" icon="terminal">
+    Scaffold, generate, preview, and deploy apps with `@tailorkit/cli`. Live Vite watch mode included.
+  </Card>
+  <Card title="React adapter" icon="react">
+    `tailorkit/react` provides `Root`, `AppView`, `useApps`, `useView`, and layout primitives for host-side rendering.
+  </Card>
+  <Card title="Layout primitives with theme tokens" icon="palette">
+    Box, Flex, Grid, and Inline primitives use your design tokens so extensions match your product without custom CSS.
+  </Card>
+  <Card title="Named scopes" icon="users">
+    Define installation boundaries per `user`, `organization`, or any custom scope. Control which apps load where.
+  </Card>
+  <Card title="Managed CDN infrastructure" icon="cloud">
+    Deploy extension bundles through TailorKit's CDN. Per-app backend services, databases, and secret storage are on the roadmap.
+  </Card>
+  <Card title="Framework-agnostic" icon="puzzle-piece">
+    Works with Next.js, TanStack Start, React Router, Nitro, Hono, and any framework that can serve HTTP handlers.
+  </Card>
+</CardGroup>
+
+## Choose your path
+
+TailorKit has two distinct audiences. Pick the track that matches your role.
+
+<CardGroup cols={2}>
+  <Card title="Host App Developer" icon="wrench" href="/host/installation">
+    You own the SaaS product that will host extensions. Start by installing TailorKit, then define views, expose components from your design system, and wire up trusted actions. Your schema becomes the contract every app developer builds against.
+
+    **Start here →** [Host Installation](/host/installation)
+  </Card>
+  <Card title="App Builder" icon="hammer" href="/apps/overview">
+    You are building an extension that runs inside a TailorKit-enabled host product. Scaffold a project with the CLI, generate typed bindings from the host schema, implement your views, and deploy. You can also build with AI from a plain-language prompt.
+
+    **Start here →** [Apps Overview](/apps/overview)
+  </Card>
+</CardGroup>

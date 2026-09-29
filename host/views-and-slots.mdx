@@ -1,0 +1,200 @@
+---
+title: Configure Views and Slots for Your Host App
+sidebarTitle: Views & Slots
+description: Publish layered host context through named views and slots so TailorKit apps can render exactly the right UI in the right place.
+---
+
+Views and slots are how your host app tells TailorKit about the current situation and where extensions can appear. A **host view** is a named path like `/users/detail` together with the context data that belongs to it. A **slot** is a place in your UI where an app renders. An **app view** is the implementation an app provides for a specific slot and host view combination.
+
+<Note>
+TailorKit does not inspect the browser URL. View paths describe a logical hierarchy that your host publishes explicitly by calling `useView` — you are in full control of when and what context apps receive.
+</Note>
+
+## Define the host contract
+
+Declare your views, slots, and context schemas inside `createTailorKit`. Each context key maps a view path to the shape of data the host provides at that level. Slots declare which view paths they support.
+
+```ts src/lib/tailorkit.ts
+import { createTailorKit } from "tailorkit";
+import { z } from "zod";
+
+export const tailorKit = createTailorKit({
+  components: {},
+  scopes: { user: z.object({ userId: z.string().min(1) }) },
+  slots: {
+    navbar: { views: ["/"] },
+    panel: { views: ["/users", "/users/detail"] },
+  },
+  contexts: {
+    "/": z.object({ workspaceId: z.string() }),
+    "/users": z.object({ canManageUsers: z.boolean() }),
+    "/users/detail": z.object({ user: userSchema }),
+  },
+});
+```
+
+Context schemas must describe objects with named fields — not scalar values or arrays. Each view declares only its own fields; ancestor fields are automatically composed into the context received by app views. A field must have exactly one owning view: duplicate field names across ancestor views are caught by both the type checker and the runtime.
+
+## Name multiple installation scopes
+
+Give each identity boundary its own schema key. Return values under those same keys from `authenticate()`, then pass the relevant scope names when reading installed apps.
+
+```ts src/lib/tailorkit.ts
+import { createTailorKit } from "tailorkit";
+import { auth } from "#lib/auth";
+import { z } from "zod";
+
+export const tailorKit = createTailorKit({
+  components: {},
+  scopes: {
+    org: z.object({ orgId: z.string() }),
+    userOrg: z.object({ orgId: z.string(), userId: z.string() }),
+  },
+  // contexts and slots can be added here.
+});
+
+async function handleRequest(request: Request) {
+  return tailorKit.handler(request, {
+    authenticate: async () => {
+      const session = await auth(request);
+      if (!session) return null;
+
+      return {
+        scopes: {
+          org: { orgId: session.org.id },
+          userOrg: { orgId: session.org.id, userId: session.user.id },
+        },
+      };
+    },
+  });
+}
+```
+
+Keep scope values to stable opaque IDs. Do not include mutable settings or feature flags — changing any value changes the installation identity. TailorKit sorts object keys recursively so property insertion order does not affect identity, but array order does remain significant.
+
+## Configure React once
+
+Create your client file once and export the bound helpers from it. The helpers carry view and slot types from the server schema, giving you end-to-end type safety without manual type imports at every call site.
+
+```tsx src/lib/tailorkit-client.tsx
+import { createTailorKitClient } from "tailorkit/react";
+import type { tailorKit } from "./tailorkit";
+
+export const client = createTailorKitClient<typeof tailorKit>({
+  baseUrl: "https://example.com/api/tailorkit/",
+});
+
+export const { AppView, useApps, useView } = client;
+```
+
+Import `Root` from `tailorkit/react` and pass it the client. Use `useApps`, `useView`, and `AppView` as descendants of `Root`. Each `Root` owns an independent registry even when multiple roots share the same client.
+
+The exported `useApps` hook types the `scopes` option from your server schema. Pass scope names to select which authenticated identities to list. Calling `useApps()` with no options loads every scope returned by `authenticate()`. Passing `scopes: []` loads nothing.
+
+```tsx
+import { Root } from "tailorkit/react";
+import { client } from "./tailorkit-client";
+
+const { useApps } = client;
+
+function InstalledApps() {
+  const { data: apps, isLoading } = useApps({ scopes: ["org", "userOrg"] });
+  if (isLoading) return <p>Loading apps…</p>;
+  return (
+    <ul>
+      {apps?.map((app) => (
+        <li key={app.id}>{app.name}</li>
+      ))}
+    </ul>
+  );
+}
+
+export function InstalledAppsRoot() {
+  return (
+    <Root client={client}>
+      <InstalledApps />
+    </Root>
+  );
+}
+```
+
+## Place slots in your layout
+
+Use `AppView` to place a slot anywhere in your React tree. Pass the target app and the slot name; TailorKit matches the active view and renders the appropriate app implementation.
+
+```tsx
+import { Root } from "tailorkit/react";
+import { AppView, client } from "./tailorkit-client";
+
+function Host({ app, children }) {
+  return (
+    <Root client={client}>
+      <nav>
+        <AppView app={app} slot="navbar" />
+      </nav>
+      <main>{children}</main>
+      <aside>
+        <AppView app={app} slot="panel" />
+      </aside>
+    </Root>
+  );
+}
+```
+
+For a fixed app list, pass `apps` directly to `Root`; `useApps` returns that list without fetching. Removing the prop resumes normal discovery.
+
+## Publish each view layer
+
+Call `useView` in the layout or page component that owns the data for that layer. The deepest mounted view is current; only it and its ancestors contribute context. Unmounting a detail view returns to the parent view automatically.
+
+```tsx
+import { useView } from "./tailorkit-client";
+
+function WorkspaceLayout({ workspaceId }) {
+  useView("/", { context: { workspaceId } });
+  return <Outlet />;
+}
+
+function UsersLayout({ canManageUsers }) {
+  useView("/users", { context: { canManageUsers } });
+  return <Outlet />;
+}
+
+function UserDetail({ user }) {
+  useView("/users/detail", { context: { user } });
+  return <UserDetails user={user} />;
+}
+```
+
+Register one active route branch per root. Every declared ancestor view must be mounted for a descendant view to render — a missing ancestor produces the selected view's error state rather than partial context. Undeclared intermediate path segments do not require registrations.
+
+## Handle loading and error states
+
+Keep the view registered while its context is still resolving. Pass a `status` object instead of `context` when the data isn't ready yet.
+
+```tsx
+useView(
+  "/users/detail",
+  query.isPending
+    ? { status: "loading" }
+    : query.isError
+      ? { status: "error" }
+      : { context: { user: query.data } },
+);
+```
+
+Loading and error publications cannot contain context. Errors take priority over loading states. Descendant loading does not block a parent view from rendering in a different slot. Loading never triggers fallback to a different app view implementation.
+
+Apps can provide `loading` and `error` components to `createView`; omitting those handlers renders nothing. Always call `useView` before any early returns in your component. When using Suspense or router loaders, publish the loading or error state from a boundary that actually mounts in that state — a suspended component cannot publish a registration before it commits. For Server Components, pass serializable data to a small Client Component that calls `useView`.
+
+## Override the view on a single slot
+
+A widget or dedicated page can supply its own view independently of the current route by passing `view` and `context` directly to `AppView`.
+
+```tsx
+import { AppView } from "./tailorkit-client";
+
+<AppView app={app} slot="panel" view="/users/detail" context={{ user }} />;
+```
+
+The override supplies that view's own context; mounted ancestors still supply their inherited fields. It does not change other mounts or the active view for other slots. Explicit mounts follow the same slot-local ancestor fallback rules as normal views.

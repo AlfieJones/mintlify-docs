@@ -1,0 +1,255 @@
+---
+title: "Production Checklist for TailorKit Host Apps"
+sidebarTitle: "Checklist"
+description: "Verify every security and safety boundary before deploying TailorKit to production: schemas, context, actions, scopes, styling, and callbacks."
+---
+
+Before you deploy TailorKit to production, work through each section below. Every item maps to a specific surface your host app controls. For a deeper explanation of why these boundaries matter, read the [Security Model](/production/security-model).
+
+<Note>
+  TailorKit's sandbox handles browser-level isolation automatically. This checklist covers the host-controlled surfaces that the sandbox cannot protect on its own: schemas, context, authorization, scopes, and styling.
+</Note>
+
+## Schema Safety
+
+Your component field schemas define the exact values apps are allowed to pass. Broad schemas are the most common source of unintended surface area.
+
+<Steps>
+  <Step title="Validate fields with narrow schemas">
+    Use enums for fixed choices, bounded integers for counts and sizes, booleans for flags, and structured objects for composite values. Avoid accepting raw `string` fields where a more specific type is possible.
+
+    ```ts tailorkit.ts
+    // ✅ Narrow field schemas
+    const StatusBadge = {
+      fields: z.object({
+        status: z.enum(["active", "inactive", "pending"]),
+        count: z.number().int().min(0).max(9999),
+        pinned: z.boolean(),
+      }),
+    };
+    ```
+  </Step>
+
+  <Step title="Validate every link href and media src before rendering">
+    Do not render an arbitrary string as an `href` or `src` attribute. Validate the value against your schema before your renderer uses it.
+
+    ```ts tailorkit.ts
+    const Link = {
+      fields: z.object({
+        href: z.url({ protocol: /^(https|mailto)$/ }),
+      }),
+    };
+    ```
+  </Step>
+
+  <Step title="Limit URLs to required protocols">
+    Accept only the protocols each component actually needs — usually `https:` and `mailto:`. Rejecting `javascript:`, `data:`, and other schemes prevents URI injection.
+
+    <Tip>
+      If a component only displays external pages, restrict to `https:` only and drop `mailto:` as well. Grant the minimum set of protocols each component requires.
+    </Tip>
+  </Step>
+
+  <Step title="Treat user-provided text as text, not raw HTML">
+    If a component field accepts long-form or user-supplied text, render it as a text node, not as markup. If you must accept HTML, sanitize it server-side before passing it to the renderer — never sanitize client-side only.
+  </Step>
+</Steps>
+
+## View Context
+
+Every field you publish through `useView()` is visible to any app rendering that view. Treat view context like a response from a public read API.
+
+<Steps>
+  <Step title="Pass minimal view context">
+    Build a dedicated view model for each view and pass only the fields that app UI needs to render. Do not pass raw database records, session objects, access tokens, or route-loader data.
+
+    ```ts tailorkit.ts
+    // ✅ Minimal view model
+    useView("users/detail", {
+      userId: user.id,
+      displayName: user.name,
+      avatarUrl: user.avatarUrl,
+      canEdit: session.hasPermission("users:write"),
+    });
+
+    // ❌ Avoid passing broad objects
+    useView("users/detail", {
+      user: dbRecord,       // full database row
+      session: req.session, // session with tokens
+    });
+    ```
+  </Step>
+
+  <Step title="Derive permissions on the server">
+    Compute permission flags in your server or session logic and pass only the result (a boolean or a role name) to view context. Do not hide UI elements client-side and treat that as authorization — a hidden component is not an access control.
+
+    <Warning>
+      If an action depends on a permission, enforce that permission inside the action handler using `context`, not based on whether the UI exposed the button.
+    </Warning>
+  </Step>
+</Steps>
+
+## Actions
+
+Actions are the host-controlled boundary for all trusted work. Each one runs in your server context and must be independently authorized.
+
+<Steps>
+  <Step title="Authorize every action from authenticated host context">
+    Every action handler receives a `context` object derived from the authenticated session. Check authorization there — never trust values the app passes as input to determine who the caller is or what they're allowed to do.
+
+    ```ts tailorkit.ts
+    const actions = createActions({
+      archiveRecord: {
+        input: z.object({ recordId: z.string().uuid() }),
+        async handler({ input, context }) {
+          const session = await getSession(context.sessionToken);
+          if (!session.hasPermission("records:archive")) {
+            throw new Error("Forbidden");
+          }
+          await db.records.archive({
+            id: input.recordId,
+            tenantId: session.tenantId, // scoped to tenant from session
+          });
+        },
+      },
+    });
+    ```
+  </Step>
+
+  <Step title="Scope every database query to the authenticated tenant">
+    Always derive `tenantId`, `organizationId`, or equivalent from `context` — not from `input`. An app should not be able to access another tenant's data by passing a different ID.
+  </Step>
+
+  <Step title="Avoid returning secrets, tokens, or sensitive metadata from actions">
+    Return only the fields the app UI needs to update its rendered output. Secrets, tokens, internal IDs, and PII that are not needed for rendering should not appear in action responses.
+  </Step>
+
+  <Step title="Use one context shape across all actions in a TailorKit instance">
+    Define a single typed context interface for your `createTailorKit` instance and use it consistently across all action handlers. This makes authorization audits easier and prevents accidental context mismatches.
+
+    ```ts tailorkit.ts
+    type KitContext = {
+      sessionToken: string;
+    };
+
+    const kit = createTailorKit<KitContext>({
+      // context shape is consistent across all actions
+    });
+    ```
+  </Step>
+</Steps>
+
+## Scopes and Installation
+
+Scopes define the installation boundary for each app. They must be stable, derived from your session, and opaque to prevent enumeration.
+
+<Steps>
+  <Step title="Define stable scopes schemas for each installation boundary">
+    Declare a named scope for every installation boundary your product supports — typically `user` and `organization`. Each scope should map to a `z.string().uuid()` or equivalent opaque type.
+
+    ```ts tailorkit.ts
+    const kit = createTailorKit({
+      scopes: {
+        organization: z.string().uuid(),
+        user: z.string().uuid(),
+      },
+    });
+    ```
+  </Step>
+
+  <Step title="Derive all scope values from the authenticated session">
+    Your `authenticate` handler must return scope values from the server-side session, never from request input or query parameters the app controls.
+
+    ```ts tailorkit.ts
+    async authenticate(context) {
+      const session = await getSession(context.sessionToken);
+      return {
+        organization: session.organizationId, // from session
+        user: session.userId,                 // from session
+      };
+    },
+    ```
+  </Step>
+
+  <Step title="Use stable opaque IDs for scope values">
+    Scope values are used to match app installations. Use stable database IDs (UUIDs) rather than display names, slugs, or any value that changes when settings are updated. Changing a scope value will break existing app installations.
+
+    <Note>
+      Keep project keys and CLI credentials on the server or developer machine. Never include them in browser bundles or app-generated context.
+    </Note>
+  </Step>
+</Steps>
+
+## Styling
+
+Apps describe their UI; the host renders it. Your styling constraints determine how much control apps have over visual presentation.
+
+<Steps>
+  <Step title="Avoid arbitrary style objects unless each property and value is constrained">
+    If you accept `style` props in a component schema, enumerate the exact properties and validate each value. An unconstrained `style` object lets apps control layout, positioning, z-index, and visual hierarchy in ways that can break your product's UI.
+  </Step>
+
+  <Step title="Avoid raw class names — use TailorKit primitives and theme tokens">
+    Instead of accepting a `className` string, use TailorKit's built-in primitives (`Box`, `Flex`, `Grid`, `Inline`) and expose styling through typed theme tokens. Apps get native-looking layout without controlling raw CSS.
+
+    <Tip>
+      Theme tokens give app builders the flexibility they need to match your product's visual style, while keeping layout and hierarchy firmly under host control.
+    </Tip>
+  </Step>
+
+  <Step title="Keep destructive and sensitive controls recognizable as trusted UI">
+    Destructive actions, billing prompts, auth dialogs, invite flows, and role or permission controls should always look and behave like host-owned UI. Design those flows as host-side components that apps trigger through actions — not as UI that apps can describe, label, or style on their own.
+
+    <Warning>
+      An app that can render a visually convincing "Delete account" or "Grant admin access" dialog through an open text field is a social engineering risk, even if the actual action is blocked by your authorization logic.
+    </Warning>
+  </Step>
+</Steps>
+
+## Callbacks vs. Actions
+
+The distinction between callbacks and actions is the most important structural boundary in a TailorKit schema. Getting this right keeps trusted work in the right hands.
+
+<Steps>
+  <Step title="Use callbacks only for UI events">
+    Callbacks communicate user interaction signals: `onClick`, `onOpenChange`, `onValueChange`, `onSelect`, and similar. They tell the app that something happened in the UI; they do not perform work.
+
+    ```ts tailorkit.ts
+    // ✅ Callbacks for UI state signals only
+    const Dropdown = {
+      callbacks: {
+        onOpenChange: z.function().args(z.boolean()),
+        onSelect: z.function().args(z.string()),
+      },
+    };
+    ```
+  </Step>
+
+  <Step title="Use actions for all trusted work">
+    Any operation that touches your API, database, billing system, auth provider, or permission model must be a host-owned action — not a callback. Actions run in your server context, can be authorized, and can validate both their input and output independently of the app that called them.
+
+    ```ts tailorkit.ts
+    // ✅ Actions for trusted side effects
+    const actions = createActions({
+      sendInvite: {
+        input: z.object({ email: z.string().email() }),
+        async handler({ input, context }) {
+          const session = await getSession(context.sessionToken);
+          await inviteService.send({
+            email: input.email,
+            organizationId: session.organizationId,
+          });
+        },
+      },
+    });
+    ```
+
+    <Note>
+      The rule of thumb: if it would be a `POST`, `PUT`, `PATCH`, or `DELETE` request in a REST API, it belongs in an action.
+    </Note>
+  </Step>
+</Steps>
+
+---
+
+Once you have verified every item above, review the [Security Model](/production/security-model) for a deeper explanation of each boundary and how they compose into TailorKit's overall trust model.

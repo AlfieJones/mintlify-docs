@@ -1,0 +1,266 @@
+---
+title: "TailorKit Security Model: Sandbox and Trust Boundaries"
+sidebarTitle: "Security Model"
+description: "Understand TailorKit's layered security model: the sandbox, the event boundary, narrow capabilities, and host-controlled surfaces you must protect."
+---
+
+TailorKit sandboxes every app's JavaScript so embedded code cannot directly reach your page, application state, or browser APIs. That sandbox is real and meaningful — but it is one layer, not a complete security strategy on its own. As the host developer, you still control what apps can see, what they can call, and what gets rendered. This page walks through each layer of the model so you can make deliberate decisions about every surface you expose.
+
+## The Trust Boundary
+
+TailorKit sandboxes app JavaScript, but your host schema determines what is actually available inside that sandbox. Apps can only render components you approve, call actions you define, and read context you pass. The sandbox enforces isolation at the browser level; your schema and authorization logic enforce it at the application level. Both are required.
+
+The production rule is straightforward: **expose only what apps need, validate what they send back, and keep side effects limited to the work your application expects.** A narrow schema combined with server-side authorization is far more robust than a broad schema defended only by the sandbox.
+
+<Warning>
+  The sandbox is not a substitute for narrow schemas, authorization, and output validation. Treat every host-controlled edge — view context, component fields, callbacks, and actions — with the same care you would apply to a public API.
+</Warning>
+
+## The Sandbox
+
+App code runs in a hidden, opaque-origin `<iframe>` with a strict Content Security Policy. The iframe is isolated from the host document: it cannot access the same origin, read cookies or `localStorage`, touch the DOM outside its frame, or make direct network requests.
+
+Specifically, the sandbox CSP blocks:
+
+- Direct network connections and `fetch` calls from sandbox code
+- Image and stylesheet loads originating from within the sandbox document
+- Nested frames created by app code
+- Form submissions from the sandbox document
+
+The host is responsible for fetching app code before passing it across the sandbox boundary. App DOM never becomes part of the host document. The host receives only a validated, serialized UI description from the sandbox, then renders that description using its own React components.
+
+<Note>
+  Because the host renders all final UI, app code never directly controls what the user sees. It describes what it wants; the host decides what to actually render.
+</Note>
+
+## The Event Boundary
+
+User interaction flows through a controlled boundary, not directly between the user and app code. When a user clicks a host-rendered component, TailorKit forwards the callback to the sandbox, the app updates its rendered output, and the host renders the result. The event travels through TailorKit in both directions.
+
+This gives you meaningful control over sensitive work:
+
+- **Loading data** — the host fetches and shapes data before passing it as view context
+- **Checking permissions** — the host decides whether a view or action is available
+- **Changing pages** — routing remains under host control
+- **Rendering final UI** — the host always renders the actual interface
+
+Because app events are forwarded through TailorKit, you can validate payloads at the boundary and choose which callbacks or actions to allow. An app cannot bypass this by constructing raw DOM events or calling browser APIs directly.
+
+## Narrow Capabilities
+
+Controlling the event boundary means you can grant purpose-built capabilities without opening the full browser environment to app code. Consider a copy-to-clipboard feature: instead of letting an app access the `Clipboard` API directly, you expose a host-owned action that copies a specific, validated value you provide.
+
+```ts tailorkit.ts
+import { createTailorKit, createActions } from "tailorkit";
+import { z } from "zod";
+
+const actions = createActions({
+  copyToClipboard: {
+    input: z.object({
+      text: z.string().max(500),
+    }),
+    async handler({ input }) {
+      // Host controls the clipboard call — not the app
+      await navigator.clipboard.writeText(input.text);
+    },
+  },
+});
+```
+
+The app requests the action; the host performs the work. The app never touches `localStorage`, cookies, `document.cookie`, or other page-level state.
+
+## Host-Controlled Surfaces
+
+Each surface you expose to apps carries its own security considerations. Design each one with the minimum required capability.
+
+### View Context
+
+View context is visible to any app rendering that view. Pass only what the app genuinely needs to render its UI — not raw database records, session objects, or access tokens. Derive permissions on the server and include only the result (a boolean, a role name, a scoped ID) rather than the underlying data that would let an app compute its own permissions.
+
+```ts tailorkit.ts
+// ✅ Pass a minimal view model
+useView("users/detail", {
+  userId: user.id,           // stable opaque ID
+  displayName: user.name,
+  canEdit: session.hasPermission("users:write"),
+});
+
+// ❌ Do not pass raw session or database objects
+useView("users/detail", {
+  user: dbUser,              // full database record
+  session: req.session,      // session object with tokens
+});
+```
+
+### Component Fields
+
+Keep your component schemas narrow. Wide `string` fields let apps inject arbitrary content. Prefer enums for fixed choices, bounded numbers for quantities, and booleans for flags.
+
+```ts tailorkit.ts
+// ✅ Narrow field schemas
+const StatusBadge = {
+  fields: z.object({
+    status: z.enum(["active", "inactive", "pending"]),
+    count: z.number().int().min(0).max(9999),
+    pinned: z.boolean(),
+  }),
+};
+
+// ❌ Overly broad fields
+const StatusBadge = {
+  fields: z.object({
+    status: z.string(),    // any string accepted
+    count: z.number(),     // unbounded
+  }),
+};
+```
+
+### Validate Links and Sources
+
+Never render an arbitrary string as an `href` or `src` attribute. An unconstrained URL field can be used to inject `javascript:` URIs or point to attacker-controlled resources. Validate every link and media source against an allowlist of protocols before rendering.
+
+<Tabs>
+  <Tab title="Zod">
+    ```ts tailorkit.ts
+    import { z } from "zod";
+
+    const Link = {
+      fields: z.object({
+        href: z.url({ protocol: /^(https|mailto)$/ }),
+      }),
+    };
+    ```
+  </Tab>
+  <Tab title="ArkType">
+    ```ts tailorkit.ts
+    import { type } from "arktype";
+
+    const Link = {
+      fields: type({
+        href: type("string.url").narrow((href) =>
+          ["https:", "mailto:"].includes(new URL(href).protocol),
+        ),
+      }),
+    };
+    ```
+  </Tab>
+  <Tab title="Valibot">
+    ```ts tailorkit.ts
+    import * as v from "valibot";
+
+    const Link = {
+      fields: v.object({
+        href: v.pipe(
+          v.string(),
+          v.url(),
+          v.check((href) =>
+            ["https:", "mailto:"].includes(new URL(href).protocol),
+          ),
+        ),
+      }),
+    };
+    ```
+  </Tab>
+</Tabs>
+
+### Callbacks
+
+Callbacks are for UI events only — `onClick`, `onOpenChange`, `onValueChange`, and similar interaction signals. They communicate intent from the user's interaction; they do not perform trusted work. If a callback in your schema triggers an API call, a record mutation, a billing flow, or an auth operation, move that work into a host action instead.
+
+```ts tailorkit.ts
+// ✅ Callbacks for UI state only
+const Toggle = {
+  callbacks: {
+    onValueChange: z.function().args(z.boolean()),
+  },
+};
+
+// ❌ Do not use callbacks for trusted work — use actions
+const DangerButton = {
+  callbacks: {
+    onDeleteRecord: z.function().args(z.string()), // This should be an action
+  },
+};
+```
+
+### Actions
+
+Actions are the right place for trusted work: API calls, record mutations, billing operations, auth and invite flows, and role or permission changes. Every action handler runs in your server context, so you can authorize it against the authenticated session, scope database queries to the correct tenant, and validate both input and output.
+
+```ts tailorkit.ts
+const actions = createActions({
+  archiveRecord: {
+    input: z.object({ recordId: z.string().uuid() }),
+    async handler({ input, context }) {
+      // Authorize against the authenticated session
+      const session = await getSession(context.sessionToken);
+      if (!session.hasPermission("records:archive")) {
+        throw new Error("Forbidden");
+      }
+      // Scope the query to the authenticated tenant
+      await db.records.archive({
+        id: input.recordId,
+        tenantId: session.tenantId,
+      });
+    },
+  },
+});
+```
+
+<Warning>
+  Do not derive tenant ID, user ID, or permission level from action input. Always derive them from `context`, which comes from your authenticated session — not from the app request.
+</Warning>
+
+### Scopes
+
+Scopes are the installation boundary TailorKit uses to match apps to the right user or organization. Define a stable schema for each named scope, and always derive scope values from the authenticated session in your `authenticate` handler rather than accepting them from the incoming request.
+
+Use stable, opaque IDs for scope values. Do not include mutable settings, display names, or anything that changes over time — scope values are used to identify an installation, not to carry configuration.
+
+```ts tailorkit.ts
+const kit = createTailorKit({
+  scopes: {
+    organization: z.string().uuid(),
+    user: z.string().uuid(),
+  },
+  async authenticate(context) {
+    const session = await getSession(context.sessionToken);
+    return {
+      // Always derived from session — never from app input
+      organization: session.organizationId,
+      user: session.userId,
+    };
+  },
+});
+```
+
+## Keep Trusted UI Recognizable
+
+The sandbox prevents app code from directly injecting DOM into your page, but an app can still describe UI that visually resembles a destructive confirmation, a billing prompt, or an auth dialog. Your schema controls what components and props are available, so you control what apps can render.
+
+<Warning>
+  Destructive, billing, auth, invite, role, and permission controls should look and behave like host-owned UI. Do not let embedded apps visually replace or imitate those flows.
+</Warning>
+
+Keep those surfaces as host-owned components that apps can trigger through actions, but cannot style, label, or compose on their own. A "Delete account" confirmation rendered by your own design system is far more trustworthy than one described by an app through an open text field.
+
+## Summary
+
+TailorKit's security model is layered. The sandbox enforces browser-level isolation; your schema and authorization logic enforce application-level trust. Together they cover:
+
+<CardGroup cols={2}>
+  <Card title="Sandbox isolation" icon="shield">
+    Opaque-origin iframe with CSP prevents direct page access, network calls, and DOM injection from app code.
+  </Card>
+  <Card title="Narrow schemas" icon="sliders">
+    Enums, bounded numbers, booleans, and validated URLs prevent apps from passing arbitrary values through component fields.
+  </Card>
+  <Card title="Server-side authorization" icon="lock">
+    Every action is authorized from authenticated context, not from app-supplied input.
+  </Card>
+  <Card title="Minimal view context" icon="eye-slash">
+    View context carries only what apps need to render — no sessions, tokens, or raw database records.
+  </Card>
+</CardGroup>
+
+For a step-by-step checklist to verify before you ship, see the [Production Checklist](/production/checklist).
